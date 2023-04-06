@@ -116,7 +116,7 @@ def check_password():
         return True
 
 
-def load_all_employee_data():
+def load_raw_employee_data():
     # with open(ideo_employees_march_2023_file, encoding='utf-8') as file:
     #     j = json.load(file)
 
@@ -214,8 +214,8 @@ def check_for_non_ideo_com_members(member_emails, employee_df):
             st.write(outside_ideo_com)
 
 
-def load_data(member_emails):
-    employee_data_df = load_all_employee_data()
+def load_employee_data(member_emails):
+    employee_data_df = load_raw_employee_data()
     employee_data_df = clean_geographic_data(employee_data_df)
     add_ideo_tenure(employee_data_df)
     # st.write(member_emails)
@@ -370,7 +370,6 @@ def plot_level_info(erg_df):
                 if col == 'level_group':
                     x = "count()"
                     y = f"{col}:O"
-                    # chart = fill_chart(erg_df, x=x, y=y, ysort='-x')
                     chart = fill_chart(df, x=x, y=y, ysort=management_levels)
 
                 else:
@@ -378,7 +377,6 @@ def plot_level_info(erg_df):
                     y = f"{col}:O"
                     tooltip = ["Worker", "cost_center_type", "Cost_Center", "Management_Level",
                                alt.Tooltip('tenure_in_yrs:Q', format=",.2f"), "location"]
-                    # chart = fill_chart(erg_df, x=x, y=y, ysort='-x', tooltip=tooltip)
                     chart = fill_chart(df, x=x, y=y, ysort=management_levels, tooltip=tooltip)
 
             st.subheader(col)
@@ -543,7 +541,7 @@ if __name__ == '__main__':
 
         # st.file_uploader()
         erg_member_emails = load_member_emails()
-        erg_member_df = load_data(erg_member_emails)
+        erg_member_df = load_employee_data(erg_member_emails)
         plot_data(erg_member_df)
 
         # MAPPING - MESSY CODE / NOT SO USEFUL YET
