@@ -1,5 +1,5 @@
 import datetime
-import json
+# import json
 import numpy as np
 import pandas as pd
 
@@ -10,12 +10,34 @@ import altair as alt
 import pydeck as pdk
 
 # from timezonefinder import TimezoneFinder
+from google.oauth2 import service_account
+from gsheetsdb import connect
+
+# Create a connection object.
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"],
+    scopes=[
+        "https://www.googleapis.com/auth/spreadsheets",
+    ],
+)
+conn = connect(credentials=credentials)
+
+
+# Perform SQL query on the Google Sheet.
+# Uses st.cache_data to only rerun when the query changes or after 10 min.
+# @st.cache_data(ttl=600)
+def run_query(query, headers=1):
+    # st.write(query)
+    rows = conn.execute(query, headers=headers)
+    rows = rows.fetchall()
+    return rows
 
 
 ideo_employees_march_2023_file = 'data/IDEO_Airtable_Employee_data.json'
 horizon_members_march_2023_file = "data/horizon_members_2023_03.txt"
 black_design_member_march_2023_file = "data/black_design_members_2023_03.txt"
 
+email_col = 'Email_Work'
 power = ['Individual', 'Team', 'Director', 'Enterprise', ]
 management_levels = [
     'Individual',
@@ -41,7 +63,8 @@ studio_names = {
     'Singapore': {'lat': 1.351616, 'long': 103.808053},
     'Tokyo': {'lat': 35.689506, 'long': 139.6917},
 }
-identifiers = ['Employee_ID', 'Worker', 'Email_-_Work', 'Preferred_Name', ]
+identifiers = ['Employee_ID', 'Worker', email_col, 'Preferred_Name', ]
+# identifiers = ['Employee_ID', 'Worker', 'Email_-_Work', 'Preferred_Name', ]
 exclude_from_plots = ['Hire_Date', 'Cost_Center', 'Region', ]
 
 biz_details = [
@@ -64,14 +87,48 @@ level_section = ['Management_Level', 'level_group', 'tenure_in_yrs', 'cost_cente
 location_section = ['location', 'studio', 'Region', 'region_simplified']
 
 
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.secrets["password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password.
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        return False
+    elif not st.session_state["password_correct"]:
+        # Password not correct, show input + error.
+        st.text_input(
+            "Password", type="password", on_change=password_entered, key="password"
+        )
+        st.error("😕 Password incorrect")
+        return False
+    else:
+        # Password correct.
+        return True
+
+
 def load_all_employee_data():
-    with open(ideo_employees_march_2023_file, encoding='utf-8') as file:
-        j = json.load(file)
+    # with open(ideo_employees_march_2023_file, encoding='utf-8') as file:
+    #     j = json.load(file)
 
-    employee_list = list(j.values())[0]  # list of dicts
-    df = pd.DataFrame(employee_list)
+    sheet_url = st.secrets["private_gsheets"]["private_gsheets_url_ideo"]
+    rows = run_query(f'SELECT * FROM "{sheet_url}"')
+    df = pd.DataFrame(rows)
 
-    df = df[df['Active_Status'] == '1'].copy()
+    # employee_list = list(j.values())[0]  # list of dicts
+    # df = pd.DataFrame(employee_list)
+    # df = df[df['Active_Status'] == '1'].copy()
+
+    df = df[df['Active_Status'] == 1].copy()
 
     sub_cols = []
     sub_cols.extend(identifiers)
@@ -143,7 +200,8 @@ def add_ideo_tenure(df):
 
 
 def check_for_non_ideo_com_members(member_emails, employee_df):
-    ideo_email_list = employee_df['Email_-_Work'].unique().tolist()
+    # ideo_email_list = employee_df['Email_-_Work'].unique().tolist()
+    ideo_email_list = employee_df[email_col].unique().tolist()
     outside_ideo_com = list(set(member_emails) - set(ideo_email_list))
     if outside_ideo_com:
         if outside_ideo_com != [""]:
@@ -160,8 +218,10 @@ def load_data(member_emails):
     employee_data_df = load_all_employee_data()
     employee_data_df = clean_geographic_data(employee_data_df)
     add_ideo_tenure(employee_data_df)
+    # st.write(member_emails)
+    # st.write(employee_data_df[email_col])
 
-    erg_member_data_df = employee_data_df[employee_data_df['Email_-_Work'].isin(member_emails)].copy()
+    erg_member_data_df = employee_data_df[employee_data_df[email_col].isin(member_emails)].copy()
     erg_member_data_df.reset_index(inplace=True, drop=True)
     erg_member_data_df = add_level_groups(erg_member_data_df)
     erg_member_data_df = add_cost_center_type(erg_member_data_df)
@@ -443,33 +503,48 @@ def geo_mapping(df):
     # )
 
 
-if __name__ == '__main__':
-
-    dataset = st.radio(
-        "Which ERG members?",
-        ('Horizon - March 2023', 'Black x Design - March 2023', 'load my own'))
-
+def load_member_emails():
     if dataset == 'load my own':
         raw_emails = st.text_area('Emails from slack channel', '''''')
-        erg_member_emails = raw_emails.split(", ")
+        member_emails = raw_emails.split(", ")
         if raw_emails:
-            member_cnt = len(erg_member_emails)
+            member_cnt = len(member_emails)
         else:
             member_cnt = 0
     else:
-        erg_email_file = None
+        # erg_email_file = None
+        sheet_url = None
         if dataset == 'Horizon - March 2023':
-            erg_email_file = horizon_members_march_2023_file
+            # erg_email_file = horizon_members_march_2023_file
+            sheet_url = st.secrets["private_gsheets"]["private_gsheets_url_horizon"]
         elif dataset == 'Black x Design - March 2023':
-            erg_email_file = black_design_member_march_2023_file
+            # erg_email_file = black_design_member_march_2023_file
+            sheet_url = st.secrets["private_gsheets"]["private_gsheets_url_blackxdesign"]
 
-        with open(erg_email_file, encoding='utf8') as f:
-            erg_member_emails = f.read().splitlines()
-            member_cnt = len(erg_member_emails)
+        # with open(erg_email_file, encoding='utf8') as f:
+        #     erg_member_emails = f.read().splitlines()
+        #     member_cnt = len(erg_member_emails)
+
+        rows = run_query(f'SELECT * FROM "{sheet_url}"', headers=1)
+        email_df = pd.DataFrame(rows, columns=[email_col])
+        member_emails = email_df[email_col].values.tolist()
+
+        member_cnt = len(member_emails)
 
     st.caption(f'Number of member emails loaded: {member_cnt}')
-    erg_member_df = load_data(erg_member_emails)
-    plot_data(erg_member_df)
+    return member_emails
 
-    # MAPPING - MESSY CODE / NOT SO USEFUL YET
-    # geo_mapping(erg_member_df)
+
+if __name__ == '__main__':
+    if check_password():
+        dataset = st.radio(
+            "Which ERG members?",
+            ('Horizon - March 2023', 'Black x Design - March 2023', 'load my own'))
+
+        # st.file_uploader()
+        erg_member_emails = load_member_emails()
+        erg_member_df = load_data(erg_member_emails)
+        plot_data(erg_member_df)
+
+        # MAPPING - MESSY CODE / NOT SO USEFUL YET
+        # geo_mapping(erg_member_df)
